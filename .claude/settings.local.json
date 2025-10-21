@@ -6,7 +6,11 @@
       "Bash(openspec validate:*)",
       "Bash(openspec show:*)",
       "Bash(openspec diff:*)",
-      "Bash(dotnet build:*)"
+      "Bash(dotnet build:*)",
+      "Bash(openspec archive add-keyword-filtering:*)",
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet run:*)",
+      "Bash(openspec archive add-cli-framework:*)"
     ],
     "deny": [],
     "ask": []
