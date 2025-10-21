@@ -12,11 +12,13 @@ class Program
         };
 
         // Define positional arguments
-        var keywordArgument = new Argument<string?>(
-            name: "keyword",
-            description: "The keyword to search for (case-insensitive by default)",
-            getDefaultValue: () => null
-        );
+        var keywordArgument = new Argument<string[]>(
+            name: "keywords",
+            description: "One or more keywords to search for (space-separated, case-insensitive by default)"
+        )
+        {
+            Arity = ArgumentArity.ZeroOrMore
+        };
 
         var filePathArgument = new Argument<string?>(
             name: "file-path",
@@ -58,12 +60,12 @@ class Program
 
         // Set the handler
         rootCommand.SetHandler(
-            async (string? keyword, string? filePath, string? output, bool caseSensitive, bool verbose, bool interactive) =>
+            async (string[] keywords, string? filePath, string? output, bool caseSensitive, bool verbose, bool interactive) =>
             {
                 try
                 {
                     // Handle interactive mode
-                    if (interactive || (keyword == null && filePath == null))
+                    if (interactive || (keywords.Length == 0 && filePath == null))
                     {
                         var result = await RunInteractiveMode();
                         if (result != 0)
@@ -75,16 +77,16 @@ class Program
                     }
 
                     // Validate required arguments
-                    if (string.IsNullOrWhiteSpace(keyword) || string.IsNullOrWhiteSpace(filePath))
+                    if (keywords.Length == 0 || string.IsNullOrWhiteSpace(filePath))
                     {
-                        Console.WriteLine("Error: Both keyword and file-path are required.");
+                        Console.WriteLine("Error: Both keywords and file-path are required.");
                         Console.WriteLine("Use --help for usage information or --interactive for interactive mode.");
                         Environment.ExitCode = 1;
                         return;
                     }
 
                     // Execute filtering
-                    var exitCode = await ExecuteFilter(keyword, filePath, output, caseSensitive, verbose);
+                    var exitCode = await ProcessKeywords(keywords, filePath, output, caseSensitive, verbose);
                     Environment.ExitCode = exitCode;
                 }
                 catch (Exception ex)
@@ -109,12 +111,24 @@ class Program
         Console.WriteLine("=== LogFilter Interactive Mode ===");
         Console.WriteLine();
 
-        // Prompt for keyword
-        Console.Write("Enter keyword to search for: ");
-        var keyword = Console.ReadLine();
-        if (string.IsNullOrWhiteSpace(keyword))
+        // Prompt for keywords
+        Console.Write("Enter keyword(s) to search for (comma-separated for multiple): ");
+        var keywordInput = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(keywordInput))
         {
             Console.WriteLine("Error: Keyword cannot be empty.");
+            return 1;
+        }
+
+        // Parse keywords (split by comma and trim)
+        var keywords = keywordInput.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(k => k.Trim())
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .ToArray();
+
+        if (keywords.Length == 0)
+        {
+            Console.WriteLine("Error: No valid keywords provided.");
             return 1;
         }
 
@@ -164,10 +178,10 @@ class Program
         Console.WriteLine();
 
         // Execute filtering with verbose mode enabled in interactive
-        return await ExecuteFilter(keyword, filePath, output, caseSensitive, verbose: true);
+        return await ProcessKeywords(keywords, filePath, output, caseSensitive, verbose: true);
     }
 
-    static async Task<int> ExecuteFilter(string keyword, string filePath, string? customOutputPath, bool caseSensitive, bool verbose)
+    static async Task<int> ProcessKeywords(string[] keywords, string filePath, string? customOutputPath, bool caseSensitive, bool verbose)
     {
         // Validate source file exists
         if (!File.Exists(filePath))
@@ -176,15 +190,90 @@ class Program
             return 1;
         }
 
+        // Generate shared timestamp for all output files
+        string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+
+        if (verbose && keywords.Length > 1)
+        {
+            Console.WriteLine($"Processing {keywords.Length} keywords in parallel:");
+            foreach (var kw in keywords)
+            {
+                Console.WriteLine($"  - {kw}");
+            }
+            Console.WriteLine();
+        }
+
+        // Track results for each keyword
+        var results = new List<(string Keyword, bool Success, string? OutputPath, string? ErrorMessage, int MatchCount)>();
+
+        // Process keywords in parallel
+        await Parallel.ForEachAsync(keywords, async (keyword, cancellationToken) =>
+        {
+            try
+            {
+                var (success, outputPath, errorMessage, matchCount) = await ExecuteFilterForKeyword(
+                    keyword, filePath, customOutputPath, caseSensitive, verbose && keywords.Length == 1, timestamp);
+
+                lock (results)
+                {
+                    results.Add((keyword, success, outputPath, errorMessage, matchCount));
+                }
+            }
+            catch (Exception ex)
+            {
+                lock (results)
+                {
+                    results.Add((keyword, false, null, ex.Message, 0));
+                }
+            }
+        });
+
+        // Display results
+        if (keywords.Length > 1)
+        {
+            Console.WriteLine("=== Processing Summary ===");
+            var successCount = 0;
+            foreach (var result in results.OrderBy(r => r.Keyword))
+            {
+                if (result.Success)
+                {
+                    successCount++;
+                    Console.WriteLine($"✓ '{result.Keyword}': {result.MatchCount} line(s) → {result.OutputPath}");
+                }
+                else
+                {
+                    Console.WriteLine($"✗ '{result.Keyword}': Failed - {result.ErrorMessage}");
+                }
+            }
+            Console.WriteLine();
+            Console.WriteLine($"Completed: {successCount}/{keywords.Length} keywords processed successfully");
+
+            return successCount > 0 ? 0 : 1;
+        }
+        else
+        {
+            // Single keyword - return result directly
+            var result = results.First();
+            return result.Success ? 0 : 1;
+        }
+    }
+
+    static async Task<(bool Success, string? OutputPath, string? ErrorMessage, int MatchCount)> ExecuteFilterForKeyword(
+        string keyword, string filePath, string? customOutputPath, bool caseSensitive, bool verbose, string timestamp)
+    {
+
         // Validate custom output path directory if provided
         if (!string.IsNullOrWhiteSpace(customOutputPath))
         {
             var outputDir = Path.GetDirectoryName(customOutputPath);
             if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
             {
-                Console.WriteLine($"Error: Output directory does not exist: {outputDir}");
-                Console.WriteLine("Please create the directory first or use --output with a valid path.");
-                return 1;
+                var errorMsg = $"Output directory does not exist: {outputDir}";
+                if (verbose)
+                {
+                    Console.WriteLine($"Error: {errorMsg}");
+                }
+                return (false, null, errorMsg, 0);
             }
         }
 
@@ -256,8 +345,7 @@ class Program
             }
             else
             {
-                // Auto-generated timestamped filename
-                string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+                // Auto-generated timestamped filename using the provided timestamp
                 string sanitizedKeyword = SanitizeFilename(keyword);
                 string outputFilename = $"filtered_{sanitizedKeyword}_{timestamp}.log";
 
@@ -279,24 +367,40 @@ class Program
                 }
             }
 
-            Console.WriteLine($"Success: Filtered {filteredLines.Count} line(s) containing '{keyword}'");
-            Console.WriteLine($"Output file: {outputFilePath}");
-            return 0;
+            if (verbose)
+            {
+                Console.WriteLine($"Success: Filtered {filteredLines.Count} line(s) containing '{keyword}'");
+                Console.WriteLine($"Output file: {outputFilePath}");
+            }
+
+            return (true, outputFilePath, null, filteredLines.Count);
         }
         catch (FileNotFoundException ex)
         {
-            Console.WriteLine($"Error: File not found: {ex.Message}");
-            return 1;
+            var errorMsg = $"File not found: {ex.Message}";
+            if (verbose)
+            {
+                Console.WriteLine($"Error: {errorMsg}");
+            }
+            return (false, null, errorMsg, 0);
         }
         catch (UnauthorizedAccessException ex)
         {
-            Console.WriteLine($"Error: Access denied. Check file permissions: {ex.Message}");
-            return 1;
+            var errorMsg = $"Access denied. Check file permissions: {ex.Message}";
+            if (verbose)
+            {
+                Console.WriteLine($"Error: {errorMsg}");
+            }
+            return (false, null, errorMsg, 0);
         }
         catch (IOException ex)
         {
-            Console.WriteLine($"Error: I/O error occurred: {ex.Message}");
-            return 1;
+            var errorMsg = $"I/O error occurred: {ex.Message}";
+            if (verbose)
+            {
+                Console.WriteLine($"Error: {errorMsg}");
+            }
+            return (false, null, errorMsg, 0);
         }
     }
 
