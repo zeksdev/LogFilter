@@ -48,7 +48,7 @@ static class TerminalHyperlink
         if (colorTerm == "truecolor")
         {
             var term = Environment.GetEnvironmentVariable("TERM");
-            if (term?.Contains("konsole") == true || term?.Contains("xterm") == true)
+            if (term?.Contains("konsole") == true)
                 return true;
         }
 
