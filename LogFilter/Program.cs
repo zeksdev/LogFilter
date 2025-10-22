@@ -85,7 +85,7 @@ static class TerminalHyperlink
         else
         {
             // Unix/Linux/macOS: file:///path/to/file.log
-            return $"file://{Uri.EscapeDataString(absolutePath).Replace("%2F", "/")}";
+            return new Uri(absolutePath).AbsoluteUri;
         }
     }
 }
