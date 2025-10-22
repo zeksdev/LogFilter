@@ -79,10 +79,8 @@ static class TerminalHyperlink
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            // Windows: file:///C:/path/to/file.log
-            // Replace backslashes with forward slashes and encode spaces
-            var uriPath = absolutePath.Replace('\\', '/');
-            return $"file:///{Uri.EscapeDataString(uriPath).Replace("%2F", "/").Replace("%3A", ":")}";
+            // Windows: Use .NET Uri to handle file path conversion correctly
+            return new Uri(absolutePath).AbsoluteUri;
         }
         else
         {
