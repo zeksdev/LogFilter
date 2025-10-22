@@ -1,0 +1,13 @@
+2025-10-22 10:00:01 INFO Application started successfully
+2025-10-22 10:00:05 ERROR Database connection failed: timeout
+2025-10-22 10:00:10 WARNING Memory usage at 85%
+2025-10-22 10:00:15 INFO User login: john@example.com
+2025-10-22 10:00:20 ERROR Failed to load configuration file
+2025-10-22 10:00:25 DEBUG Processing request ID: 12345
+2025-10-22 10:00:30 WARNING Disk space running low
+2025-10-22 10:00:35 INFO Request completed in 150ms
+2025-10-22 10:00:40 ERROR Null reference exception in UserService
+2025-10-22 10:00:45 INFO Background job started
+2025-10-22 10:00:50 WARNING API rate limit approaching
+2025-10-22 10:00:55 ERROR Authentication token expired
+2025-10-22 10:01:00 INFO Cache cleared successfully

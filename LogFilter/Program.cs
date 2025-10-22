@@ -1,5 +1,94 @@
 using System.CommandLine;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+/// <summary>
+/// Utility class for terminal hyperlink support (OSC 8 escape sequences)
+/// </summary>
+static class TerminalHyperlink
+{
+    private static readonly bool _supportsHyperlinks;
+
+    static TerminalHyperlink()
+    {
+        _supportsHyperlinks = DetectHyperlinkSupport();
+    }
+
+    /// <summary>
+    /// Detects if the current terminal supports hyperlinks (OSC 8)
+    /// </summary>
+    private static bool DetectHyperlinkSupport()
+    {
+        // Check for known terminal emulators that support hyperlinks
+        var termProgram = Environment.GetEnvironmentVariable("TERM_PROGRAM");
+        var wtSession = Environment.GetEnvironmentVariable("WT_SESSION");
+        var vteVersion = Environment.GetEnvironmentVariable("VTE_VERSION");
+        var colorTerm = Environment.GetEnvironmentVariable("COLORTERM");
+
+        // Windows Terminal
+        if (!string.IsNullOrEmpty(wtSession))
+            return true;
+
+        // iTerm2 (macOS)
+        if (termProgram == "iTerm.app")
+            return true;
+
+        // VS Code terminal
+        if (termProgram == "vscode")
+            return true;
+
+        // GNOME Terminal 3.x+ (VTE-based terminals)
+        if (!string.IsNullOrEmpty(vteVersion))
+        {
+            if (int.TryParse(vteVersion, out int version) && version >= 5000)
+                return true;
+        }
+
+        // Konsole and other modern terminals
+        if (colorTerm == "truecolor")
+        {
+            var term = Environment.GetEnvironmentVariable("TERM");
+            if (term?.Contains("konsole") == true)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Formats a file path as a clickable hyperlink if the terminal supports it
+    /// </summary>
+    public static string FormatPath(string filePath)
+    {
+        if (!_supportsHyperlinks)
+            return filePath;
+
+        var fileUri = PathToFileUri(filePath);
+
+        // OSC 8 format: \e]8;;URI\e\\TEXT\e]8;;\e\\
+        return $"\x1b]8;;{fileUri}\x1b\\{filePath}\x1b]8;;\x1b\\";
+    }
+
+    /// <summary>
+    /// Converts a file path to a proper file:// URI
+    /// </summary>
+    private static string PathToFileUri(string filePath)
+    {
+        // Get absolute path
+        var absolutePath = Path.GetFullPath(filePath);
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            // Windows: Use .NET Uri to handle file path conversion correctly
+            return new Uri(absolutePath).AbsoluteUri;
+        }
+        else
+        {
+            // Unix/Linux/macOS: file:///path/to/file.log
+            return new Uri(absolutePath).AbsoluteUri;
+        }
+    }
+}
 
 class Program
 {
@@ -238,7 +327,8 @@ class Program
                 if (result.Success)
                 {
                     successCount++;
-                    Console.WriteLine($"✓ '{result.Keyword}': {result.MatchCount} line(s) → {result.OutputPath}");
+                    var formattedPath = TerminalHyperlink.FormatPath(result.OutputPath!);
+                    Console.WriteLine($"✓ '{result.Keyword}': {result.MatchCount} line(s) → {formattedPath}");
                 }
                 else
                 {
@@ -370,7 +460,8 @@ class Program
             if (verbose)
             {
                 Console.WriteLine($"Success: Filtered {filteredLines.Count} line(s) containing '{keyword}'");
-                Console.WriteLine($"Output file: {outputFilePath}");
+                var formattedPath = TerminalHyperlink.FormatPath(outputFilePath);
+                Console.WriteLine($"Output file: {formattedPath}");
             }
 
             return (true, outputFilePath, null, filteredLines.Count);
